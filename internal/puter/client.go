@@ -104,32 +104,38 @@ func (c *Client) Call(messages []types.PuterMessage, authToken string) (string, 
 			continue
 		}
 
-		// Format 1: {"text": "hello"} — الأكثر شيوعًا في streaming
+		extracted := false
+
+		// Format 1: {"type":"text","text":"hello"} — الأكثر شيوعًا
 		if chunk.Text != "" {
 			fullText.WriteString(chunk.Text)
-			continue
+			extracted = true
 		}
 
-		// Format 2: SSE-style delta {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
-		if chunk.Type == "content_block_delta" && chunk.Delta.Type == "text_delta" && chunk.Delta.Text != "" {
+		// Format 2: SSE-style {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
+		if !extracted && chunk.Type == "content_block_delta" && chunk.Delta.Type == "text_delta" && chunk.Delta.Text != "" {
 			fullText.WriteString(chunk.Delta.Text)
-			continue
+			extracted = true
 		}
 
 		// Format 3: {"success":true,"result":{"text":"..."}}
-		if chunk.Success && chunk.Result.Text != "" {
+		if !extracted && chunk.Success && chunk.Result.Text != "" {
 			fullText.WriteString(chunk.Result.Text)
-			continue
+			extracted = true
 		}
 
 		// Format 4: {"success":true,"result":{"message":{"content":[{"type":"text","text":"..."}]}}}
-		if chunk.Success && len(chunk.Result.Message.Content) > 0 {
+		if !extracted && chunk.Success && len(chunk.Result.Message.Content) > 0 {
 			for _, item := range chunk.Result.Message.Content {
 				if item.Type == "text" && item.Text != "" {
 					fullText.WriteString(item.Text)
+					extracted = true
 				}
 			}
-			continue
+		}
+
+		if !extracted && lineNum <= 5 {
+			log.Printf("[Puter] سطر %d لم يُستخرج منه نص: %.200s", lineNum-1, line)
 		}
 	}
 
