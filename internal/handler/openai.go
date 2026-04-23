@@ -38,6 +38,19 @@ func (h *Handler) HandleOpenAIChat(c *gin.Context) {
 	}
 
 	hasTools := len(req.Tools) > 0
+
+	// مشكلة 8: Panic لو messages فاضية
+	if len(req.Messages) == 0 {
+		c.JSON(400, gin.H{
+			"error": gin.H{
+				"message": "messages array cannot be empty",
+				"type":    "invalid_request_error",
+				"code":    "invalid_request",
+			},
+		})
+		return
+	}
+
 	lastMsgLen := len(req.Messages[len(req.Messages)-1].Content)
 	log.Info().
 		Str("api", "OpenAI").
@@ -120,13 +133,25 @@ func (h *Handler) convertOpenAIMessages(req types.OpenAIRequest) (string, []type
 	var systemPrompt string
 	var messages []types.ClaudeMessage
 
-	// 处理工具定义，添加到 system prompt
+	// تحويل tools لـ JSON RawMessage واستخدام BuildSystemPrompt للتوحيد
 	if len(req.Tools) > 0 {
-		toolPrompt := "\n\n# Tools\n\nYou have access to the following tools. When you need to use a tool, output it in this EXACT format:\n\n<tool_call>\n{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}\n</tool_call>\n\nAvailable tools:\n\n"
+		// بناء tool prompt يدويًا بنفس أسلوب converter.go
+		toolPrompt := "\n\n# Tools\n\n" +
+			"You have access to the following tools.\n" +
+			"IMPORTANT: When you need to use a tool, you MUST output it using this EXACT XML format and nothing else for that part:\n\n" +
+			"<tool_call>\n" +
+			"{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}\n" +
+			"</tool_call>\n\n" +
+			"Rules:\n" +
+			"- The JSON inside <tool_call> must be valid JSON\n" +
+			"- Do NOT add any text inside the <tool_call> tags other than the JSON\n" +
+			"- You may have text before or after the <tool_call> block\n" +
+			"- Use the exact tool name and parameter names as specified below\n\n" +
+			"Available tools:\n\n"
 		for _, tool := range req.Tools {
 			toolPrompt += fmt.Sprintf("## %s\n", tool.Function.Name)
 			if tool.Function.Description != "" {
-				toolPrompt += fmt.Sprintf("%s\n", tool.Function.Description)
+				toolPrompt += fmt.Sprintf("Description: %s\n", tool.Function.Description)
 			}
 			if len(tool.Function.Parameters) > 0 {
 				toolPrompt += fmt.Sprintf("Input schema: %s\n", string(tool.Function.Parameters))
@@ -136,9 +161,17 @@ func (h *Handler) convertOpenAIMessages(req types.OpenAIRequest) (string, []type
 		systemPrompt = toolPrompt
 	}
 
+	// مشكلة 6: دمج tool results المتتالية في user message واحدة
+	// أولًا نبني قائمة الـ messages بدون دمج
+	type rawMsg struct {
+		role      string
+		content   string
+		toolCalls []types.OpenAIToolCall
+	}
+	var rawMsgs []rawMsg
+
 	for _, m := range req.Messages {
 		if m.Role == "system" {
-			// 提取 system 消息内容
 			var content string
 			if err := json.Unmarshal(m.Content, &content); err == nil {
 				systemPrompt = content + systemPrompt
@@ -148,38 +181,60 @@ func (h *Handler) convertOpenAIMessages(req types.OpenAIRequest) (string, []type
 			continue
 		}
 
-		// 转换消息
-		claudeMsg := types.ClaudeMessage{
-			Role: m.Role,
-		}
-
-		// 处理 tool 角色的消息
 		if m.Role == "tool" {
-			claudeMsg.Role = "user"
 			var content string
 			if err := json.Unmarshal(m.Content, &content); err != nil {
 				content = string(m.Content)
 			}
-			toolResult := fmt.Sprintf("\n<tool_result id=\"%s\">\n%s\n</tool_result>\n", m.ToolCallID, content)
-			claudeMsg.Content, _ = json.Marshal(toolResult)
+			rawMsgs = append(rawMsgs, rawMsg{
+				role:    "tool",
+				content: fmt.Sprintf("\n<tool_result id=\"%s\">\n%s\n</tool_result>\n", m.ToolCallID, content),
+			})
 		} else if len(m.ToolCalls) > 0 {
-			// 处理 assistant 消息中的 tool_calls
-			var content string
-			if err := json.Unmarshal(m.Content, &content); err == nil && content != "" {
-				// 有文本内容
-			} else {
-				content = ""
+			var textContent string
+			if err := json.Unmarshal(m.Content, &textContent); err != nil {
+				textContent = ""
 			}
 			for _, tc := range m.ToolCalls {
-				content += fmt.Sprintf("\n<tool_call>\n{\"name\": \"%s\", \"id\": \"%s\", \"input\": %s}\n</tool_call>\n", tc.Function.Name, tc.ID, tc.Function.Arguments)
+				textContent += fmt.Sprintf("\n<tool_call>\n{\"name\": \"%s\", \"id\": \"%s\", \"input\": %s}\n</tool_call>\n",
+					tc.Function.Name, tc.ID, tc.Function.Arguments)
 			}
-			claudeMsg.Content, _ = json.Marshal(content)
+			rawMsgs = append(rawMsgs, rawMsg{role: "assistant", content: textContent})
 		} else {
-			// 普通消息
-			claudeMsg.Content = m.Content
+			var content string
+			if err := json.Unmarshal(m.Content, &content); err != nil {
+				content = string(m.Content)
+			}
+			rawMsgs = append(rawMsgs, rawMsg{role: m.Role, content: content})
 		}
+	}
 
-		messages = append(messages, claudeMsg)
+	// دمج tool messages المتتالية في user message واحدة
+	i := 0
+	for i < len(rawMsgs) {
+		msg := rawMsgs[i]
+		if msg.role == "tool" {
+			// اجمع كل tool results المتتالية
+			combined := msg.content
+			j := i + 1
+			for j < len(rawMsgs) && rawMsgs[j].role == "tool" {
+				combined += rawMsgs[j].content
+				j++
+			}
+			contentJSON, _ := json.Marshal(combined)
+			messages = append(messages, types.ClaudeMessage{
+				Role:    "user",
+				Content: contentJSON,
+			})
+			i = j
+		} else {
+			contentJSON, _ := json.Marshal(msg.content)
+			messages = append(messages, types.ClaudeMessage{
+				Role:    msg.role,
+				Content: contentJSON,
+			})
+			i++
+		}
 	}
 
 	return systemPrompt, messages

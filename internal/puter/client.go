@@ -82,23 +82,64 @@ func (c *Client) Call(messages []types.PuterMessage, authToken string) (string, 
 		return "", fmt.Errorf("puter API error: status=%d, body=%s", resp.StatusCode, string(bodyBytes))
 	}
 
-	// 收集完整响应
+	// 收集完整响应 — يدعم formats متعددة من Puter API
 	var fullText strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // buffer 1MB لأسطر طويلة
+	lineNum := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
 			continue
 		}
-		var chunk types.PuterStreamChunk
-		if err := json.Unmarshal([]byte(line), &chunk); err == nil && chunk.Text != "" {
-			fullText.WriteString(chunk.Text)
+
+		// logging لأول 3 سطور للتشخيص
+		if lineNum < 3 {
+			log.Printf("[Puter] سطر %d: %.200s", lineNum, line)
 		}
+		lineNum++
+
+		var chunk types.PuterStreamChunk
+		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+			continue
+		}
+
+		// Format 1: {"text": "hello"} — الأكثر شيوعًا في streaming
+		if chunk.Text != "" {
+			fullText.WriteString(chunk.Text)
+			continue
+		}
+
+		// Format 2: SSE-style delta {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
+		if chunk.Type == "content_block_delta" && chunk.Delta.Type == "text_delta" && chunk.Delta.Text != "" {
+			fullText.WriteString(chunk.Delta.Text)
+			continue
+		}
+
+		// Format 3: {"success":true,"result":{"text":"..."}}
+		if chunk.Success && chunk.Result.Text != "" {
+			fullText.WriteString(chunk.Result.Text)
+			continue
+		}
+
+		// Format 4: {"success":true,"result":{"message":{"content":[{"type":"text","text":"..."}]}}}
+		if chunk.Success && len(chunk.Result.Message.Content) > 0 {
+			for _, item := range chunk.Result.Message.Content {
+				if item.Type == "text" && item.Text != "" {
+					fullText.WriteString(item.Text)
+				}
+			}
+			continue
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("[Puter] scanner error: %v", err)
 	}
 
 	responseText := fullText.String()
 	elapsed := time.Since(startTime)
-	log.Printf("[Puter] 请求完成, 耗时: %v, 响应: %d 字符", elapsed, len(responseText))
+	log.Printf("[Puter] 请求完成, 耗时: %v, 响应: %d 字符, سطور: %d", elapsed, len(responseText), lineNum)
 
 	return responseText, nil
 }

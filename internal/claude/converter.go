@@ -7,6 +7,9 @@ import (
 	"puter2api/internal/types"
 )
 
+// DefaultModel الـ model الافتراضي المستخدم في كل الـ responses
+const DefaultModel = "claude-opus-4-5-20251101"
+
 // GetMessageText 获取消息文本内容
 func GetMessageText(m *types.ClaudeMessage) string {
 	var text string
@@ -39,7 +42,7 @@ func GetMessageText(m *types.ClaudeMessage) string {
 
 // BuildSystemPrompt 构建包含工具定义的 system prompt
 func BuildSystemPrompt(originalSystem json.RawMessage, tools json.RawMessage) string {
-	systemText := "You are currently using model: claude-opus-4-5-20251101\n\n"
+	systemText := "You are currently using model: " + DefaultModel + "\n\n"
 
 	if len(originalSystem) > 0 {
 		var sysStr string
@@ -60,11 +63,22 @@ func BuildSystemPrompt(originalSystem json.RawMessage, tools json.RawMessage) st
 	if len(tools) > 0 {
 		var toolDefs []types.ToolDef
 		if err := json.Unmarshal(tools, &toolDefs); err == nil && len(toolDefs) > 0 {
-			toolPrompt := "\n\n# Tools\n\nYou have access to the following tools. When you need to use a tool, output it in this EXACT format:\n\n<tool_call>\n{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}\n</tool_call>\n\nAvailable tools:\n\n"
+			toolPrompt := "\n\n# Tools\n\n" +
+				"You have access to the following tools.\n" +
+				"IMPORTANT: When you need to use a tool, you MUST output it using this EXACT XML format and nothing else for that part:\n\n" +
+				"<tool_call>\n" +
+				"{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}\n" +
+				"</tool_call>\n\n" +
+				"Rules:\n" +
+				"- The JSON inside <tool_call> must be valid JSON\n" +
+				"- Do NOT add any text inside the <tool_call> tags other than the JSON\n" +
+				"- You may have text before or after the <tool_call> block\n" +
+				"- Use the exact tool name and parameter names as specified below\n\n" +
+				"Available tools:\n\n"
 			for _, tool := range toolDefs {
 				toolPrompt += fmt.Sprintf("## %s\n", tool.Name)
 				if tool.Description != "" {
-					toolPrompt += fmt.Sprintf("%s\n", tool.Description)
+					toolPrompt += fmt.Sprintf("Description: %s\n", tool.Description)
 				}
 				if len(tool.InputSchema) > 0 {
 					toolPrompt += fmt.Sprintf("Input schema: %s\n", string(tool.InputSchema))

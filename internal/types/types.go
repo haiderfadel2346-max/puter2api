@@ -164,8 +164,39 @@ type PuterMessage struct {
 	Content string `json:"content"`
 }
 
-// PuterStreamChunk Puter 流式响应块
+// PuterStreamChunk Puter 流式响应块 — يدعم formats متعددة
 type PuterStreamChunk struct {
+	// Format 1: {"text": "hello"} — direct text
+	Type string `json:"type"`
+	Text string `json:"text"`
+
+	// Format 2: {"success":true, "result":{"message":{"content":[{"text":"hello"}]}}}
+	Success bool             `json:"success"`
+	Result  PuterResultField `json:"result"`
+
+	// Format 3: SSE-style {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}
+	Delta PuterDeltaField `json:"delta"`
+}
+
+// PuterResultField حقل result في الـ response الأول
+type PuterResultField struct {
+	Text    string               `json:"text"`
+	Message PuterResultMessage   `json:"message"`
+}
+
+// PuterResultMessage رسالة داخل result
+type PuterResultMessage struct {
+	Content []PuterContentItem `json:"content"`
+}
+
+// PuterContentItem عنصر في content array
+type PuterContentItem struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// PuterDeltaField حقل delta في SSE events
+type PuterDeltaField struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }

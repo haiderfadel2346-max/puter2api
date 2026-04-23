@@ -141,21 +141,43 @@ func (s *Storage) GetToken(id int64) (*Token, error) {
 }
 
 // GetActiveToken 获取一个可用的 Token（轮询策略）
+// أولوية: valid + active → active فقط (fallback)
 func (s *Storage) GetActiveToken() (*Token, error) {
 	var t Token
 	var lastUsed sql.NullTime
-	// 优先选择有效且最久未使用的 Token
+
+	// أولًا: نجرب valid tokens
 	err := s.db.QueryRow(
 		`SELECT id, name, token, is_active, is_valid, last_used, created_at, updated_at
 		 FROM tokens WHERE is_active = 1 AND is_valid = 1
 		 ORDER BY last_used ASC NULLS FIRST, created_at ASC LIMIT 1`,
 	).Scan(&t.ID, &t.Name, &t.Token, &t.IsActive, &t.IsValid, &lastUsed, &t.CreatedAt, &t.UpdatedAt)
+
+	if err == nil {
+		if lastUsed.Valid {
+			t.LastUsed = &lastUsed.Time
+		}
+		return &t, nil
+	}
+
+	if err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to get active token: %w", err)
+	}
+
+	// Fallback: لو مفيش valid token، جرب أي active token
+	err = s.db.QueryRow(
+		`SELECT id, name, token, is_active, is_valid, last_used, created_at, updated_at
+		 FROM tokens WHERE is_active = 1
+		 ORDER BY last_used ASC NULLS FIRST, created_at ASC LIMIT 1`,
+	).Scan(&t.ID, &t.Name, &t.Token, &t.IsActive, &t.IsValid, &lastUsed, &t.CreatedAt, &t.UpdatedAt)
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to get active token: %w", err)
+		return nil, fmt.Errorf("failed to get active token (fallback): %w", err)
 	}
+
 	if lastUsed.Valid {
 		t.LastUsed = &lastUsed.Time
 	}

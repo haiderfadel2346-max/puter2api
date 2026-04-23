@@ -18,6 +18,9 @@ type SSEWriter struct {
 func NewSSEWriter(c *gin.Context) *SSEWriter {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
+	c.Header("X-Accel-Buffering", "no")
 	return &SSEWriter{c: c}
 }
 

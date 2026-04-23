@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -50,6 +51,16 @@ func (h *Handler) HandleMessages(c *gin.Context) {
 	}
 
 	hasTools := len(req.Tools) > 0
+
+	// مشكلة 8: Panic لو messages فاضية
+	if len(req.Messages) == 0 {
+		c.JSON(400, gin.H{
+			"type":  "error",
+			"error": gin.H{"type": "invalid_request_error", "message": "messages array cannot be empty"},
+		})
+		return
+	}
+
 	lastMsgLen := len(req.Messages[len(req.Messages)-1].Content)
 	log.Info().
 		Str("api", "Claude").
@@ -101,8 +112,12 @@ func (h *Handler) HandleMessages(c *gin.Context) {
 	// 解析工具调用
 	toolCalls, remainingText := claude.ParseToolCalls(responseText)
 
-	// 发送 SSE 响应
-	h.sendSSEResponse(c, remainingText, toolCalls, len(responseText))
+	// مشكلة 2: stream=false مش مدعوم — بنفرق هنا
+	if req.Stream {
+		h.sendSSEResponse(c, remainingText, toolCalls, len(responseText))
+	} else {
+		h.sendNonStreamResponse(c, remainingText, toolCalls, len(responseText))
+	}
 
 	// 记录完成日志
 	elapsed := time.Since(startTime).Seconds()
@@ -118,7 +133,7 @@ func (h *Handler) sendSSEResponse(c *gin.Context, text string, toolCalls []types
 	sse := claude.NewSSEWriter(c)
 
 	// 1. message_start
-	sse.SendMessageStart(msgID, "claude-opus-4-5")
+	sse.SendMessageStart(msgID, claude.DefaultModel)
 
 	blockIndex := 0
 
@@ -149,4 +164,63 @@ func (h *Handler) sendSSEResponse(c *gin.Context, text string, toolCalls []types
 	// 5. message_delta & message_stop
 	sse.SendMessageDelta(stopReason, totalLen)
 	sse.SendMessageStop()
+}
+
+// sendNonStreamResponse يرسل Anthropic JSON response مباشر (بدون SSE)
+func (h *Handler) sendNonStreamResponse(c *gin.Context, text string, toolCalls []types.ParsedToolCall, totalLen int) {
+	msgID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
+
+	stopReason := "end_turn"
+	if len(toolCalls) > 0 {
+		stopReason = "tool_use"
+	}
+
+	// بناء content array
+	var content []interface{}
+
+	// إضافة text block لو موجود
+	if text != "" {
+		content = append(content, map[string]interface{}{
+			"type": "text",
+			"text": text,
+		})
+	}
+
+	// إضافة tool_use blocks
+	for _, call := range toolCalls {
+		var inputObj interface{}
+		if err := json.Unmarshal(call.Input, &inputObj); err != nil {
+			inputObj = map[string]interface{}{}
+		}
+		content = append(content, map[string]interface{}{
+			"type":  "tool_use",
+			"id":    call.ID,
+			"name":  call.Name,
+			"input": inputObj,
+		})
+	}
+
+	// لو content فاضي، نضيف text block فاضي
+	if len(content) == 0 {
+		content = append(content, map[string]interface{}{
+			"type": "text",
+			"text": "",
+		})
+	}
+
+	resp := map[string]interface{}{
+		"id":           msgID,
+		"type":         "message",
+		"role":         "assistant",
+		"content":      content,
+		"model":        claude.DefaultModel,
+		"stop_reason":  stopReason,
+		"stop_sequence": nil,
+		"usage": map[string]interface{}{
+			"input_tokens":  100,
+			"output_tokens": totalLen,
+		},
+	}
+
+	c.JSON(200, resp)
 }
