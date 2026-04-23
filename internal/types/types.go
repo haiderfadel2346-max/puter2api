@@ -166,16 +166,24 @@ type PuterMessage struct {
 
 // PuterStreamChunk Puter 流式响应块 — يدعم formats متعددة
 type PuterStreamChunk struct {
-	// Format 1: {"text": "hello"} — direct text
+	// Format 1: {"text": "hello"} — direct text streaming
 	Type string `json:"type"`
 	Text string `json:"text"`
 
-	// Format 2: {"success":true, "result":{"message":{"content":[{"text":"hello"}]}}}
+	// Format 2: {"success":true/false, "result":{...}} or {"success":false,"error":{...}}
 	Success bool             `json:"success"`
 	Result  PuterResultField `json:"result"`
+	Error   PuterErrorField  `json:"error"`
 
 	// Format 3: SSE-style {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}
 	Delta PuterDeltaField `json:"delta"`
+}
+
+// PuterErrorField حقل error في الـ response
+type PuterErrorField struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Status  int    `json:"status"`
 }
 
 // PuterResultField حقل result في الـ response الأول

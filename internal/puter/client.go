@@ -85,7 +85,7 @@ func (c *Client) Call(messages []types.PuterMessage, authToken string) (string, 
 	// 收集完整响应 — يدعم formats متعددة من Puter API
 	var fullText strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // buffer 1MB لأسطر طويلة
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	lineNum := 0
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -95,13 +95,20 @@ func (c *Client) Call(messages []types.PuterMessage, authToken string) (string, 
 
 		// logging لأول 3 سطور للتشخيص
 		if lineNum < 3 {
-			log.Printf("[Puter] سطر %d: %.200s", lineNum, line)
+			log.Printf("[Puter] سطر %d: %.300s", lineNum, line)
 		}
 		lineNum++
 
 		var chunk types.PuterStreamChunk
 		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
 			continue
+		}
+
+		// كشف خطأ Puter: {"success":false,"error":{...}}
+		if !chunk.Success && chunk.Error.Code != "" {
+			errMsg := fmt.Sprintf("puter error [%s]: %s", chunk.Error.Code, chunk.Error.Message)
+			log.Printf("[Puter] %s", errMsg)
+			return "", fmt.Errorf("%s", errMsg)
 		}
 
 		extracted := false
