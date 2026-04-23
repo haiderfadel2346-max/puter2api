@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"puter2api/internal/claude"
@@ -98,6 +99,19 @@ func (h *Handler) HandleOpenAIChat(c *gin.Context) {
 	// 调用 Puter API
 	responseText, err := h.puterClient.Call(puterMessages, token)
 	if err != nil {
+		// لو insufficient_funds، نعمل invalidate للـ token تلقائيًا
+		if strings.HasPrefix(err.Error(), "INSUFFICIENT_FUNDS:") {
+			log.Warn().Str("api", "OpenAI").Int64("id", tokenRecord.ID).Msg("Token نفد رصيده — سيتم تعطيله تلقائيًا")
+			h.store.MarkTokenInvalid(tokenRecord.ID)
+			c.JSON(402, gin.H{
+				"error": gin.H{
+					"message": "Puter account has insufficient funds. Please add a new token.",
+					"type":    "api_error",
+					"code":    "insufficient_funds",
+				},
+			})
+			return
+		}
 		log.Error().Str("api", "OpenAI").Err(err).Msg("调用 Puter API 失败")
 		c.JSON(500, gin.H{
 			"error": gin.H{

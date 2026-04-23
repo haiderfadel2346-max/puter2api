@@ -108,6 +108,10 @@ func (c *Client) Call(messages []types.PuterMessage, authToken string) (string, 
 		if !chunk.Success && chunk.Error.Code != "" {
 			errMsg := fmt.Sprintf("puter error [%s]: %s", chunk.Error.Code, chunk.Error.Message)
 			log.Printf("[Puter] %s", errMsg)
+			// نرجع error مع كود خاص لـ insufficient_funds عشان الـ handler يعمل invalidate للـ token
+			if chunk.Error.Code == "insufficient_funds" {
+				return "", fmt.Errorf("INSUFFICIENT_FUNDS: %s", errMsg)
+			}
 			return "", fmt.Errorf("%s", errMsg)
 		}
 

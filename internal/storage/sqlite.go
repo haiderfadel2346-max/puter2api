@@ -184,7 +184,15 @@ func (s *Storage) GetActiveToken() (*Token, error) {
 	return &t, nil
 }
 
-// UpdateTokenUsed 更新 Token 最后使用时间
+// MarkTokenInvalid يُعلّم token كـ invalid (مثلاً لما Puter يرجع insufficient_funds)
+func (s *Storage) MarkTokenInvalid(id int64) error {
+	now := time.Now()
+	_, err := s.db.Exec(
+		`UPDATE tokens SET is_valid = 0, updated_at = ? WHERE id = ?`,
+		now, id,
+	)
+	return err
+}
 func (s *Storage) UpdateTokenUsed(id int64) error {
 	now := time.Now()
 	_, err := s.db.Exec(
