@@ -16,7 +16,7 @@ import (
 
 const (
 	apiURL       = "https://api.puter.com/drivers/call"
-	defaultModel = "claude-opus-4-5-20251101"
+	defaultModel = "claude-opus-4.5"
 )
 
 // Client Puter API 客户端
@@ -45,7 +45,7 @@ func NewClient() *Client {
 func (c *Client) Call(messages []types.PuterMessage, authToken string) (string, error) {
 	puterReq := types.PuterRequest{
 		Interface: "puter-chat-completion",
-		Driver:    "claude",
+		Driver:    "ai-chat",
 		TestMode:  false,
 		Method:    "complete",
 		Args: types.PuterArgs{
@@ -116,6 +116,11 @@ func (c *Client) Call(messages []types.PuterMessage, authToken string) (string, 
 		}
 
 		extracted := false
+
+		// تجاهل usage chunks بصمت
+		if chunk.Type == "usage" {
+			continue
+		}
 
 		// Format 1: {"type":"text","text":"hello"} — الأكثر شيوعًا
 		if chunk.Text != "" {

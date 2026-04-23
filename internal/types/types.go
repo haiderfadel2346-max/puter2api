@@ -166,17 +166,17 @@ type PuterMessage struct {
 
 // PuterStreamChunk Puter 流式响应块 — يدعم formats متعددة
 type PuterStreamChunk struct {
-	// Format 1: {"text": "hello"} — direct text streaming
 	Type string `json:"type"`
 	Text string `json:"text"`
 
-	// Format 2: {"success":true/false, "result":{...}} or {"success":false,"error":{...}}
 	Success bool             `json:"success"`
 	Result  PuterResultField `json:"result"`
 	Error   PuterErrorField  `json:"error"`
 
-	// Format 3: SSE-style {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}
 	Delta PuterDeltaField `json:"delta"`
+
+	// حقل usage — نتجاهله بس لازم نعرفه عشان مش يظهر كـ "لم يُستخرج"
+	Usage *json.RawMessage `json:"usage,omitempty"`
 }
 
 // PuterErrorField حقل error في الـ response
